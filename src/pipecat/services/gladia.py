@@ -135,7 +135,10 @@ class GladiaSTTService(STTService):
         endpointing: Optional[float] = 0.2
         maximum_duration_without_endpointing: Optional[int] = 10
         audio_enhancer: Optional[bool] = None
+        speech_threshold: Optional[float] = 0.8
         words_accurate_timestamps: Optional[bool] = None
+        custom_vocabulary: Optional[bool] = None
+        custom_vocabulary_config: Optional[dict] = None
 
     def __init__(
         self,
@@ -166,44 +169,36 @@ class GladiaSTTService(STTService):
             "maximum_duration_without_endpointing": params.maximum_duration_without_endpointing,
             "pre_processing": {
                 "audio_enhancer": params.audio_enhancer,
+                "speech_threshold": params.speech_threshold,
             },
             "realtime_processing": {
                 "words_accurate_timestamps": params.words_accurate_timestamps,
+                "custom_vocabulary": params.custom_vocabulary,
+                "custom_vocabulary_config": params.custom_vocabulary_config,
             },
         }
         self._confidence = confidence
-        self._websocket = None
-        self._receive_task = None
 
     def language_to_service_language(self, language: Language) -> Optional[str]:
         return language_to_gladia_language(language)
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
-        if self._websocket:
-            return
         self._settings["sample_rate"] = self.sample_rate
         response = await self._setup_gladia()
         self._websocket = await websockets.connect(response["url"])
-        if not self._receive_task:
-            self._receive_task = self.create_task(self._receive_task_handler())
+        self._receive_task = self.create_task(self._receive_task_handler())
 
     async def stop(self, frame: EndFrame):
         await super().stop(frame)
         await self._send_stop_recording()
-        if self._websocket:
-            await self._websocket.close()
-            self._websocket = None
-        if self._receive_task:
-            await self.wait_for_task(self._receive_task)
-            self._receive_task = None
+        await self._websocket.close()
+        await self.wait_for_task(self._receive_task)
 
     async def cancel(self, frame: CancelFrame):
         await super().cancel(frame)
         await self._websocket.close()
-        if self._receive_task:
-            await self.cancel_task(self._receive_task)
-            self._receive_task = None
+        await self.cancel_task(self._receive_task)
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         await self.start_processing_metrics()
